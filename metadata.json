@@ -1,0 +1,6 @@
+{
+  "name": "PSX AlphaBrief - Pakistan Stock Exchange Automated Financial Intelligence",
+  "description": "100% automated zero-chat PSX newsletter platform with daily KSE-100 digests, weekly portfolio radar, scrapers, LLM synthesis, and email dispatch pipelines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
