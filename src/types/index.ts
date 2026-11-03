@@ -106,10 +106,25 @@ export interface WeeklyIntelligenceReport {
   htmlContent?: string;
 }
 
+/**
+ * News-update report. `newsSource` records honestly where the stories came
+ * from: live RSS feeds, or the calibrated archive used when live feeds were
+ * unreachable. The archive stories are not current news and must be labelled
+ * as such wherever they are shown.
+ */
+export interface NewsUpdateReport {
+  id: string;
+  generatedAt: string;
+  newsSource: 'live-rss' | 'calibrated-archive';
+  articles: NewsSnippet[];
+  macroSummary: string[];
+  htmlContent?: string;
+}
+
 export interface PipelineExecutionLog {
   id: string;
   timestamp: string;
-  type: 'daily' | 'weekly';
+  type: 'daily' | 'weekly' | 'news';
   status: 'pending' | 'success' | 'failed';
   durationMs: number;
   logs: string[];

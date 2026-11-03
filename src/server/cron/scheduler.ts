@@ -4,16 +4,19 @@ import { newsScraper } from '../data/newsScraper.ts';
 import { financialLlm } from '../llm/engine.ts';
 import { renderDailyDigestHtml } from '../templates/dailyDigestTemplate.ts';
 import { renderWeeklyRadarHtml } from '../templates/weeklyRadarTemplate.ts';
+import { renderNewsUpdateHtml } from '../templates/newsUpdateTemplate.ts';
 import { emailDispatcher } from '../email/dispatcher.ts';
 import { dbStore } from '../db/store.ts';
 import { sortTopMovers, aggregateSectors } from '../../utils/rules.ts';
-import { DailyDigestReport, WeeklyIntelligenceReport, PipelineExecutionLog } from '../../types/index.ts';
+import { DailyDigestReport, WeeklyIntelligenceReport, NewsUpdateReport, PipelineExecutionLog } from '../../types/index.ts';
 
 export class CronPipelineScheduler {
   private dailyTask: ScheduledTask | null = null;
   private weeklyTask: ScheduledTask | null = null;
+  private newsTask: ScheduledTask | null = null;
   private isDailyRunning: boolean = false;
   private isWeeklyRunning: boolean = false;
+  private isNewsRunning: boolean = false;
 
   constructor() {
     this.initializeCronJobs();
@@ -51,9 +54,25 @@ export class CronPipelineScheduler {
       }
     );
 
+    // 3. News Update: Monday-Friday at 17:00 PKT
+    // "0 17 * * 1-5" (Minute 0, Hour 17, Mon-Fri)
+    this.newsTask = cron.schedule(
+      '0 17 * * 1-5',
+      async () => {
+        console.log('[Cron Job] Triggering PSX News Update (05:00 PM PKT)...');
+        await this.runNewsUpdatePipeline().catch(err => {
+          console.error('[Cron Job] News Update pipeline failed:', err);
+        });
+      },
+      {
+        timezone: 'Asia/Karachi'
+      }
+    );
+
     console.log('[Scheduler] Cron jobs scheduled successfully:');
     console.log(' - Daily Digest: 08:00 AM PKT (Mon-Fri)');
     console.log(' - Weekly Radar: 10:00 AM PKT (Saturday)');
+    console.log(' - News Update: 05:00 PM PKT (Mon-Fri)');
   }
 
   /**
@@ -132,7 +151,10 @@ export class CronPipelineScheduler {
         subscribers: activeSubscribers,
         campaignType: 'daily_digest'
       });
-      appendLog(`Bulk dispatch completed: ${dispatchResult.recipientCount} emails queued via ${dispatchResult.provider}`);
+      appendLog(`Bulk dispatch completed: ${dispatchResult.recipientCount} emails accepted via ${dispatchResult.provider}`);
+      if (!dispatchResult.success) {
+        throw new Error(`Email dispatch failed: ${dispatchResult.errors.join('; ')}`);
+      }
 
       const durationMs = Date.now() - startTime;
       const executionLog: PipelineExecutionLog = {
@@ -142,7 +164,7 @@ export class CronPipelineScheduler {
         status: 'success',
         durationMs,
         logs,
-        recipientCount: activeSubscribers.length
+        recipientCount: dispatchResult.recipientCount
       };
 
       dbStore.addExecutionLog(executionLog);
@@ -224,7 +246,10 @@ export class CronPipelineScheduler {
         subscribers: activeSubscribers,
         campaignType: 'weekly_radar'
       });
-      appendLog(`Bulk dispatch completed: ${dispatchResult.recipientCount} emails queued via ${dispatchResult.provider}`);
+      appendLog(`Bulk dispatch completed: ${dispatchResult.recipientCount} emails accepted via ${dispatchResult.provider}`);
+      if (!dispatchResult.success) {
+        throw new Error(`Email dispatch failed: ${dispatchResult.errors.join('; ')}`);
+      }
 
       const durationMs = Date.now() - startTime;
       const executionLog: PipelineExecutionLog = {
@@ -234,7 +259,7 @@ export class CronPipelineScheduler {
         status: 'success',
         durationMs,
         logs,
-        recipientCount: activeSubscribers.length
+        recipientCount: dispatchResult.recipientCount
       };
 
       dbStore.addExecutionLog(executionLog);
@@ -258,13 +283,103 @@ export class CronPipelineScheduler {
     }
   }
 
+  /**
+   * Executes the news-update pipeline: fetch news (live RSS when reachable,
+   * otherwise the calibrated archive, labelled as such), summarise it, and
+   * dispatch it to active subscribers. The archive stories are NOT current
+   * news; the template says so. A failed dispatch marks the run failed.
+   */
+  public async runNewsUpdatePipeline(): Promise<PipelineExecutionLog> {
+    if (this.isNewsRunning) {
+      throw new Error('News Update pipeline is already executing');
+    }
+    this.isNewsRunning = true;
+    const startTime = Date.now();
+    const logs: string[] = [];
+
+    const appendLog = (msg: string) => {
+      const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+      const entry = `[${timestamp}] ${msg}`;
+      logs.push(entry);
+      console.log(`[News Pipeline] ${msg}`);
+    };
+
+    try {
+      appendLog('STEP 1/3: Fetching financial news from Business Recorder, Dawn, Profit, and Mettis Global...');
+      const { articles, newsSource } = await newsScraper.fetchWeeklyNewsDetailed();
+      appendLog(`Ingested ${articles.length} news stories (source: ${newsSource}).`);
+
+      appendLog('STEP 2/3: Summarising the stories into macro context...');
+      const macroSummary = await financialLlm.generateWeeklyMacroSummary(articles);
+      appendLog('Macro summary complete.');
+
+      appendLog('STEP 3/3: Compiling news update email and dispatching to active subscribers...');
+      const generatedAt = new Date().toISOString();
+      const newsReport: NewsUpdateReport = {
+        id: `news-${generatedAt.slice(0, 10)}-${Date.now()}`,
+        generatedAt,
+        newsSource,
+        articles,
+        macroSummary
+      };
+      const htmlContent = renderNewsUpdateHtml(newsReport);
+      newsReport.htmlContent = htmlContent;
+      dbStore.saveNewsReport(newsReport);
+      appendLog('News template rendered and report cached into database');
+
+      const activeSubscribers = dbStore.getActiveSubscribers();
+      const dispatchResult = await emailDispatcher.dispatchCampaign({
+        subject: `PSX News Update: Market headlines & macro context [${generatedAt.slice(0, 10)}]`,
+        htmlContent,
+        subscribers: activeSubscribers,
+        campaignType: 'news_update'
+      });
+      appendLog(`Bulk dispatch completed: ${dispatchResult.recipientCount} emails accepted via ${dispatchResult.provider}`);
+      if (!dispatchResult.success) {
+        throw new Error(`Email dispatch failed: ${dispatchResult.errors.join('; ')}`);
+      }
+
+      const durationMs = Date.now() - startTime;
+      const executionLog: PipelineExecutionLog = {
+        id: `exec-news-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        type: 'news',
+        status: 'success',
+        durationMs,
+        logs,
+        recipientCount: dispatchResult.recipientCount
+      };
+
+      dbStore.addExecutionLog(executionLog);
+      return executionLog;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      appendLog(`CRITICAL ERROR in News Pipeline: ${errorMessage}`);
+      const durationMs = Date.now() - startTime;
+      const executionLog: PipelineExecutionLog = {
+        id: `exec-news-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        type: 'news',
+        status: 'failed',
+        durationMs,
+        logs
+      };
+      dbStore.addExecutionLog(executionLog);
+      throw err;
+    } finally {
+      this.isNewsRunning = false;
+    }
+  }
+
   public getStatus() {
     return {
       dailyCron: '0 8 * * 1-5 (08:00 AM PKT Mon-Fri)',
       weeklyCron: '0 10 * * 6 (10:00 AM PKT Sat)',
+      newsCron: '0 17 * * 1-5 (05:00 PM PKT Mon-Fri)',
       timezone: 'Asia/Karachi (PKT)',
       isDailyRunning: this.isDailyRunning,
-      isWeeklyRunning: this.isWeeklyRunning
+      isWeeklyRunning: this.isWeeklyRunning,
+      isNewsRunning: this.isNewsRunning
     };
   }
 }

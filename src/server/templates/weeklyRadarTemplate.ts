@@ -19,7 +19,7 @@ export function renderWeeklyRadarHtml(report: WeeklyIntelligenceReport, unsubscr
     const tagBg = s.category === 'Dividend/Defensive' ? '#DCFCE7' : '#E0F2FE';
     const tagColor = s.category === 'Dividend/Defensive' ? '#15803D' : '#0369A1';
 
-    return `
+  return `
       <div style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
         <table width="100%" cellspacing="0" cellpadding="0">
           <tr>
@@ -67,6 +67,14 @@ export function renderWeeklyRadarHtml(report: WeeklyIntelligenceReport, unsubscr
       </div>
     `;
   }).join('');
+
+  // Outlook section content is derived only from data already in this report:
+  // the macro bullets, the sector screen, and the counts of screened stocks.
+  // It adds no new figures and no new predictions.
+  const topSector = report.sectorHeatmap[0];
+  const outlookSectorLine = topSector
+    ? `The sector screen in this email is led by ${topSector.sector} (${topSector.weeklyReturnPct}% screened weekly return, ${topSector.dominantTrend.toLowerCase()} trend).`
+    : 'No sector screen data is available in this report.';
 
   return `
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -155,6 +163,35 @@ export function renderWeeklyRadarHtml(report: WeeklyIntelligenceReport, unsubscr
             </td>
           </tr>
 
+          <!-- Section 4: Market outlook (labelled, not a prediction) -->
+          <tr>
+            <td style="padding: 20px 28px; background-color: #0E1422; color: #F2F5FA; border-bottom: 1px solid #1F2A40;">
+              <div style="font-size: 13px; font-weight: 800; color: #38BDF8; text-transform: uppercase; margin-bottom: 8px;">
+                Market outlook — next week &amp; next month (LLM-generated, not financial advice)
+              </div>
+              <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.5; color: #F2F5FA;">
+                <strong>Outlook horizon:</strong> the coming trading week and the coming month,
+                framed by the weekly radar in this email. ${outlookSectorLine}
+                The screen flags ${report.top24Buy.length} stocks worth watching and
+                ${report.top20Avoid.length} to be careful with. The macro themes to watch
+                over that horizon are the three bullets in the macro brief above.
+              </p>
+              <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.5; color: #A3AEC2;">
+                <strong>Basis — read this before acting:</strong> this outlook is built only
+                from the scraped news and end-of-day data summarised in this email. Market
+                figures are calibrated simulated data whenever live PSX data feeds are
+                unreachable, so they illustrate the format rather than live market prices.
+                The "Buy" and "Avoid" lists are mechanical screens of that data, not
+                recommendations, and risk labels on individual stocks are screen labels,
+                not verified findings about any company.
+              </p>
+              <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #F2F5FA;">
+                <strong>This outlook is not a prediction and not a guarantee.</strong>
+                Do not buy or sell based on it alone. It is not personal investment advice.
+              </p>
+            </td>
+          </tr>
+
           <!-- Footer & Regulatory Compliance -->
           <tr>
             <td style="padding: 24px 28px; background-color: #070B14; color: #6B778D; font-size: 11px; line-height: 1.5; border-top: 1px solid #1F2A40;">
@@ -164,7 +201,7 @@ export function renderWeeklyRadarHtml(report: WeeklyIntelligenceReport, unsubscr
               <table width="100%" cellspacing="0" cellpadding="0">
                 <tr>
                   <td style="color: #6B778D;">
-                    Data source: PSX Data Portal & Financial Press RSS.
+                    Data basis: PSX Data Portal &amp; Financial Press RSS when reachable; otherwise calibrated simulated data (see outlook note above).
                   </td>
                   <td align="right">
                     <a href="${unsubscribeUrl}" style="color: #A3AEC2; text-decoration: underline;">Unsubscribe</a>

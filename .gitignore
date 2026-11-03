@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+# Subscriber data lives in this local JSON file on the machine running the
+# server. It holds subscribers' email addresses, so it must not be committed
+# to the repository. (A copy committed earlier remains in git history; this
+# entry stops future changes to it being tracked.)
+.data_store.json

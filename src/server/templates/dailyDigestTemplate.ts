@@ -232,7 +232,7 @@ export function renderDailyDigestHtml(report: DailyDigestReport, unsubscribeUrl:
               <table width="100%" cellspacing="0" cellpadding="0">
                 <tr>
                   <td style="color: #6B778D;">
-                    Data source: PSX Data Portal (DPS).
+                    Data basis: PSX Data Portal (DPS) when reachable; otherwise calibrated simulated session data.
                   </td>
                   <td align="right">
                     <a href="${unsubscribeUrl}" style="color: #A3AEC2; text-decoration: underline;">Unsubscribe</a>

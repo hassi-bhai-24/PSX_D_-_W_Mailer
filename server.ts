@@ -8,6 +8,9 @@ import { pipelineScheduler } from './src/server/cron/scheduler.ts';
 import { validateEmail } from './src/utils/rules.ts';
 import { renderDailyDigestHtml } from './src/server/templates/dailyDigestTemplate.ts';
 import { renderWeeklyRadarHtml } from './src/server/templates/weeklyRadarTemplate.ts';
+import { renderWelcomeHtml } from './src/server/templates/welcomeTemplate.ts';
+import { renderNewsUpdateHtml } from './src/server/templates/newsUpdateTemplate.ts';
+import { emailDispatcher } from './src/server/email/dispatcher.ts';
 
 dotenv.config();
 
@@ -24,7 +27,7 @@ app.use(express.json());
 // ----------------------------------------------------------------------------
 
 // 1. Subscribe endpoint
-app.post('/api/subscribers', (req: Request, res: Response) => {
+app.post('/api/subscribers', async (req: Request, res: Response) => {
   const { email, source } = req.body;
   if (!email || !validateEmail(email)) {
     res.status(400).json({ error: 'Please provide a valid corporate or personal email address.' });
@@ -32,11 +35,37 @@ app.post('/api/subscribers', (req: Request, res: Response) => {
   }
 
   const { subscriber, isNew } = dbStore.addSubscriber(email, source);
+
+  // Welcome email: sent only for a genuinely new subscription, via the real
+  // dispatcher. A failed send never un-saves the subscription, but the
+  // response must not claim the welcome email was sent when it was not.
+  let welcomeEmailSent = false;
+  let welcomeEmailError: string | undefined;
+  if (isNew) {
+    try {
+      const result = await emailDispatcher.sendEmail({
+        to: subscriber.email,
+        subject: 'Welcome to PSX AlphaBrief',
+        htmlContent: renderWelcomeHtml(subscriber.email, '/api/unsubscribe')
+      });
+      welcomeEmailSent = result.success;
+      if (!result.success) {
+        welcomeEmailError = result.error;
+        console.error(`[Subscribe] Welcome email failed for ${subscriber.email}: ${result.error}`);
+      }
+    } catch (err: unknown) {
+      welcomeEmailError = err instanceof Error ? err.message : String(err);
+      console.error(`[Subscribe] Welcome email failed for ${subscriber.email}:`, err);
+    }
+  }
+
   res.status(200).json({
     success: true,
     message: isNew ? 'Subscription confirmed. You will receive the next PSX Daily Digest at 08:00 AM PKT.' : 'Your subscription is already active.',
     subscriber,
-    activeCount: dbStore.getActiveSubscribers().length
+    activeCount: dbStore.getActiveSubscribers().length,
+    welcomeEmailSent,
+    ...(welcomeEmailError ? { welcomeEmailError } : {})
   });
 });
 
@@ -152,6 +181,53 @@ app.post('/api/pipeline/run-weekly', async (_req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
   }
+});
+
+// 9b. Pipeline trigger: Run News Update
+app.post('/api/pipeline/run-news', async (_req: Request, res: Response) => {
+  try {
+    const log = await pipelineScheduler.runNewsUpdatePipeline();
+    res.json({ success: true, log });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// 9c. Latest News Update Report
+app.get('/api/reports/news/latest', async (_req: Request, res: Response) => {
+  let report = dbStore.getLatestNewsReport();
+  if (!report) {
+    try {
+      await pipelineScheduler.runNewsUpdatePipeline();
+      report = dbStore.getLatestNewsReport();
+    } catch (e) {
+      console.error('Error generating initial news report:', e);
+    }
+  }
+  if (report) {
+    report = {
+      ...report,
+      htmlContent: renderNewsUpdateHtml(report, '/api/unsubscribe')
+    };
+  }
+  res.json(report || { error: 'No news report available yet.' });
+});
+
+// 9d. Preview Raw HTML for News Update Email
+app.get('/api/preview/news-html', async (_req: Request, res: Response) => {
+  let report = dbStore.getLatestNewsReport();
+  if (!report) {
+    await pipelineScheduler.runNewsUpdatePipeline();
+    report = dbStore.getLatestNewsReport();
+  }
+  if (!report) {
+    res.status(404).send('News report could not be generated');
+    return;
+  }
+  const html = renderNewsUpdateHtml(report, '/api/unsubscribe');
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 });
 
 // 10. Pipeline status and execution logs
