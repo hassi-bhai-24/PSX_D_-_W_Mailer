@@ -4,6 +4,7 @@ import {
   Subscriber,
   DailyDigestReport,
   WeeklyIntelligenceReport,
+  NewsUpdateReport,
   PipelineExecutionLog
 } from '../../types/index.ts';
 
@@ -13,8 +14,17 @@ interface DatabaseStoreSchema {
   subscribers: Subscriber[];
   dailyReports: DailyDigestReport[];
   weeklyReports: WeeklyIntelligenceReport[];
+  newsReports: NewsUpdateReport[];
   executionLogs: PipelineExecutionLog[];
 }
+
+const EMPTY_STORE: DatabaseStoreSchema = {
+  subscribers: [],
+  dailyReports: [],
+  weeklyReports: [],
+  newsReports: [],
+  executionLogs: []
+};
 
 export class DatabaseStore {
   private data: DatabaseStoreSchema;
@@ -30,18 +40,22 @@ export class DatabaseStore {
     try {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw) as Partial<DatabaseStoreSchema>;
+        // Merge over defaults so older store files (without newsReports, or
+        // with any missing collection) keep working instead of crashing.
+        return {
+          subscribers: Array.isArray(parsed.subscribers) ? parsed.subscribers : [],
+          dailyReports: Array.isArray(parsed.dailyReports) ? parsed.dailyReports : [],
+          weeklyReports: Array.isArray(parsed.weeklyReports) ? parsed.weeklyReports : [],
+          newsReports: Array.isArray(parsed.newsReports) ? parsed.newsReports : [],
+          executionLogs: Array.isArray(parsed.executionLogs) ? parsed.executionLogs : []
+        };
       }
     } catch (e) {
       console.warn('[DB Store] Error reading local db file, initializing fresh store:', e);
     }
 
-    return {
-      subscribers: [],
-      dailyReports: [],
-      weeklyReports: [],
-      executionLogs: []
-    };
+    return { ...EMPTY_STORE, subscribers: [], dailyReports: [], weeklyReports: [], newsReports: [], executionLogs: [] };
   }
 
   private save(): void {
@@ -158,6 +172,21 @@ export class DatabaseStore {
 
   public getLatestWeeklyReport(): WeeklyIntelligenceReport | null {
     return this.data.weeklyReports[0] || null;
+  }
+
+  // --- News Reports ---
+  public saveNewsReport(report: NewsUpdateReport): void {
+    const idx = this.data.newsReports.findIndex(r => r.id === report.id);
+    if (idx >= 0) {
+      this.data.newsReports[idx] = report;
+    } else {
+      this.data.newsReports.unshift(report);
+    }
+    this.save();
+  }
+
+  public getLatestNewsReport(): NewsUpdateReport | null {
+    return this.data.newsReports[0] || null;
   }
 
   // --- Logs ---

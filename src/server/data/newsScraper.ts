@@ -21,6 +21,21 @@ export class NewsScraperService {
    * Pulls real RSS feeds if reachable; falls back to verified weekly financial macro intelligence snippets.
    */
   public async fetchWeeklyNews(): Promise<NewsSnippet[]> {
+    const { articles } = await this.fetchWeeklyNewsDetailed();
+    return articles;
+  }
+
+  /**
+   * Same as fetchWeeklyNews, but also reports where the stories came from so
+   * callers can label them honestly. `live-rss` means at least 4 articles were
+   * read from the feeds just now; `calibrated-archive` means the feeds were
+   * unreachable and the hardcoded archive below was used instead — those
+   * stories are not current news.
+   */
+  public async fetchWeeklyNewsDetailed(): Promise<{
+    articles: NewsSnippet[];
+    newsSource: 'live-rss' | 'calibrated-archive';
+  }> {
     const liveArticles: NewsSnippet[] = [];
 
     for (const feed of NewsScraperService.RSS_FEEDS) {
@@ -66,11 +81,11 @@ export class NewsScraperService {
     }
 
     if (liveArticles.length >= 4) {
-      return liveArticles;
+      return { articles: liveArticles, newsSource: 'live-rss' };
     }
 
     // High-conviction verified financial intelligence stories for Pakistan Macro/PSX context
-    return this.getCalibratedNewsArchive();
+    return { articles: this.getCalibratedNewsArchive(), newsSource: 'calibrated-archive' };
   }
 
   private extractSymbols(text: string): string[] {
